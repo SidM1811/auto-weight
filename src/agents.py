@@ -12,7 +12,7 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 class StateGenerator(nn.Module):
     
     def __init__(self, state_dim, param_dim):
-        super().__init()
+        super(StateGenerator, self).__init__()
         self.state_encoder = nn.Sequential(
             layer_init(nn.Linear(np.array(state_dim).prod(), 64)),
             nn.Tanh(),

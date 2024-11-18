@@ -13,7 +13,7 @@ import tyro
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from agents import Agent, ParamConditionedAgent
+from agents import Agent, ParamConditionedAgent, StateGenerator
 from lunarlander_mod import LunarLander
 
 import json
@@ -68,6 +68,8 @@ class Args:
     ent_coef: float = 0.01
     """coefficient of the entropy"""
     vf_coef: float = 0.5
+    """coefficient of the value function"""
+    il_coef: float = 0.5
     """coefficient of the value function"""
     max_grad_norm: float = 0.5
     """the maximum norm for the gradient clipping"""
@@ -134,10 +136,6 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
-    # env setup
-    # envs = gym.vector.SyncVectorEnv(
-    #     [make_env(args.env_id, i, args.capture_video, run_name) for i in range(args.num_envs)],
-    # )
     envs = gym.vector.SyncVectorEnv(
         [lambda: LunarLander() for i in range(args.num_envs)],
     )
@@ -147,6 +145,8 @@ if __name__ == "__main__":
     teacher_agent = ParamConditionedAgent(envs, args.num_shaping).to(device)
     student_optimizer = optim.Adam(student_agent.parameters(), lr=args.learning_rate, eps=1e-5)
     teacher_optimizer = optim.Adam(teacher_agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    
+    state_generator = StateGenerator(envs.single_observation_space.shape[0], args.num_shaping).to(device)
     
     teacher_replay_buffer = [] # (obs, action, logprob, reward, done, value, advantage)
 
@@ -192,8 +192,10 @@ if __name__ == "__main__":
             action = torch.cat([action_student, action_teacher])
             logprob = torch.cat([logprob_student, logprob_teacher])
             value = torch.cat([value_student, value_teacher])
+            shaped_value = value_int_teacher
             
             values[step] = value.flatten()
+            shaped_values[step] = shaped_value.flatten()
             actions[step] = action
             logprobs[step] = logprob
 
@@ -223,7 +225,7 @@ if __name__ == "__main__":
             teacher_next_ext_value = teacher_next_ext_value.reshape(1, -1)
             teacher_next_int_value = teacher_next_int_value.reshape(1, -1)
             
-            next_value = torch.cat([student_next_value, teacher_next_ext_value]).flatten()
+            next_value = torch.cat([student_next_value, teacher_next_ext_value + teacher_next_int_value]).flatten()
             next_shaped_value = teacher_next_int_value.flatten()
             advantages = torch.zeros_like(rewards).to(device)
             shaped_advantages = torch.zeros_like(shaped_rewards).to(device)
@@ -239,42 +241,30 @@ if __name__ == "__main__":
                     nextvalues = values[t + 1]
                     nextshapedvalues = shaped_values[t + 1]
                 delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                shaped_delta = shaped_rewards[t] + args.gamma * nextshapedvalues * nextnonterminal - shaped_values[t]
+                shaped_delta = shaped_rewards[t] + args.gamma * nextshapedvalues * nextnonterminal[args.num_student_envs:] - shaped_values[t]
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-                shaped_advantages[t] = lastshapedgaelam = shaped_delta + args.gamma * args.gae_lambda * nextnonterminal * lastshapedgaelam
+                shaped_advantages[t] = lastshapedgaelam = shaped_delta + args.gamma * args.gae_lambda * nextnonterminal[args.num_student_envs:] * lastshapedgaelam
             returns = advantages + values
             shaped_returns = shaped_advantages + shaped_values
 
         # flatten the batch
-        b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
-        b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
-        b_advantages = advantages.reshape(-1)
-        b_returns = returns.reshape(-1)
-        b_shaped_returns = shaped_returns.reshape(-1)
-        b_values = values.reshape(-1)
-        b_shaped_values = shaped_values.reshape(-1)
+        b_obs = obs[:, :args.num_student_envs].reshape((-1,) + envs.single_observation_space.shape)
+        b_logprobs = logprobs[:, :args.num_student_envs].reshape(-1)
+        b_actions = actions[:, :args.num_student_envs].reshape((-1,) + envs.single_action_space.shape)
+        b_advantages = advantages[:, :args.num_student_envs].reshape(-1)
+        b_returns = returns[:, :args.num_student_envs].reshape(-1)
+        b_values = values[:, :args.num_student_envs].reshape(-1)
 
         # Optimizing the policy and value network
-        b_inds = np.arange(args.batch_size)
+        b_inds = np.arange(args.num_student_envs * args.num_steps)
         clipfracs = []
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
-            for start in range(0, args.batch_size, args.minibatch_size):
+            for start in range(0, args.num_student_envs * args.num_steps, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
-                
-                _, student_newlogprob, student_entropy, student_newvalue = student_agent.get_action_and_value(
-                    b_obs[mb_inds][:args.num_student_envs], b_actions.long()[mb_inds][:args.num_student_envs]
-                )
-                _, teacher_newlogprob, teacher_entropy, teacher_newvalue, _ = teacher_agent.get_action_and_value(
-                    b_obs[mb_inds][args.num_student_envs:], params = teacher_params, action=b_actions.long()[mb_inds][args.num_student_envs:]
-                )
-                
-                newlogprob = torch.cat([student_newlogprob, teacher_newlogprob])
-                entropy = torch.cat([student_entropy, teacher_entropy])
-                newvalue = torch.cat([student_newvalue, teacher_newvalue])
-                
+
+                _, newlogprob, entropy, newvalue = student_agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -312,12 +302,119 @@ if __name__ == "__main__":
                 loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
 
                 student_optimizer.zero_grad()
-                teacher_optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(student_agent.parameters(), args.max_grad_norm)
-                nn.utils.clip_grad_norm_(teacher_agent.parameters(), args.max_grad_norm)
                 student_optimizer.step()
+
+            if args.target_kl is not None and approx_kl > args.target_kl:
+                break
+            
+        # Teacher update
+        # flatten the batch
+        b_teacher_obs = obs[:, args.num_student_envs:].reshape((-1,) + envs.single_observation_space.shape)
+        b_teacher_logprobs = logprobs[:, args.num_student_envs:].reshape(-1)
+        b_teacher_actions = actions[:, args.num_student_envs:].reshape((-1,) + envs.single_action_space.shape)
+        b_teacher_advantages = advantages[:, args.num_student_envs:].reshape(-1)
+        b_teacher_returns = returns[:, args.num_student_envs:].reshape(-1)
+        b_teacher_values = values[:, args.num_student_envs:].reshape(-1)
+        
+        b_teacher_shaped_advantages = shaped_advantages.reshape(-1)
+        b_teacher_shaped_returns = shaped_returns.reshape(-1)
+        b_teacher_shaped_values = shaped_values.reshape(-1)
+        
+        b_teacher_params = torch.cat([teacher_params for _ in range(args.num_steps)], dim=0).to(device).reshape(-1, args.num_shaping)
+
+        # Optimizing the policy and value network
+        b_teacher_inds = np.arange(args.num_teacher_envs * args.num_steps)
+        clipfracs = []
+        for epoch in range(args.update_epochs):
+            np.random.shuffle(b_teacher_inds)
+            for start in range(0, args.num_teacher_envs * args.num_steps, args.minibatch_size):
+                end = start + args.minibatch_size
+                mb_teacher_inds = b_teacher_inds[start:end]
+
+                _, newlogprob, entropy, newextvalue, newintvalue = teacher_agent.get_action_and_value(b_teacher_obs[mb_teacher_inds], action=b_teacher_actions.long()[mb_teacher_inds], params=b_teacher_params[mb_teacher_inds])
+                _, studentnewlogprob, _, _ = student_agent.get_action_and_value(b_teacher_obs[mb_teacher_inds], action=b_teacher_actions.long()[mb_teacher_inds])
+                
+                logratio = newlogprob - b_teacher_logprobs[mb_teacher_inds]
+                studentlogratio = newlogprob - b_teacher_logprobs[mb_teacher_inds]
+                
+                ratio = logratio.exp()
+                student_teacher_ratio = (studentlogratio - logratio.clone().detach()).exp()
+
+                with torch.no_grad():
+                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                    old_approx_kl = (-logratio).mean()
+                    approx_kl = ((ratio - 1) - logratio).mean()
+                    clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+
+                mb_teacher_advantages = b_teacher_advantages[mb_teacher_inds]
+                mb_teacher_shaped_advantages = b_teacher_shaped_advantages[mb_teacher_inds]
+                if args.norm_adv:
+                    mb_teacher_advantages = (mb_teacher_advantages - mb_teacher_advantages.mean()) / (mb_teacher_advantages.std() + 1e-8)
+                    mb_teacher_shaped_advantages = (mb_teacher_shaped_advantages - mb_teacher_shaped_advantages.mean()) / (mb_teacher_shaped_advantages.std() + 1e-8)
+
+                # Policy loss
+                pg_loss1 = -mb_teacher_advantages * ratio
+                pg_loss2 = -mb_teacher_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                
+                # Imitation learning objective
+                
+                mb_gen_weight = state_generator.param_ratio(b_teacher_params[mb_teacher_inds], b_teacher_obs[mb_teacher_inds])
+                mb_gen_weight_total = mb_gen_weight.sum()
+                mb_normalized_gen_weight = mb_gen_weight / mb_gen_weight_total
+                
+                il_loss1 = -mb_teacher_advantages * student_teacher_ratio * mb_normalized_gen_weight
+                il_loss2 = -mb_teacher_advantages * torch.clamp(student_teacher_ratio, 1 - args.clip_coef, 1 + args.clip_coef) * mb_normalized_gen_weight
+                il_loss = torch.max(il_loss1, il_loss2).mean()
+
+                newvalue = newextvalue + newintvalue
+                # Value loss
+                newvalue = newvalue.view(-1)
+                if args.clip_vloss:
+                    v_loss_unclipped = (newvalue - b_teacher_returns[mb_teacher_inds]) ** 2
+                    v_clipped = b_teacher_values[mb_teacher_inds] + torch.clamp(
+                        newvalue - b_teacher_values[mb_teacher_inds],
+                        -args.clip_coef,
+                        args.clip_coef,
+                    )
+                    v_loss_clipped = (v_clipped - b_teacher_returns[mb_teacher_inds]) ** 2
+                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                    v_loss = 0.5 * v_loss_max.mean()
+                else:
+                    v_loss = 0.5 * ((newvalue - b_teacher_returns[mb_teacher_inds]) ** 2).mean()
+                    
+                # Value loss
+                newintvalue = newintvalue.view(-1)
+                if args.clip_vloss:
+                    v_int_loss_unclipped = (newintvalue - b_teacher_shaped_returns[mb_teacher_inds]) ** 2
+                    v_int_clipped = b_teacher_shaped_values[mb_teacher_inds] + torch.clamp(
+                        newintvalue - b_teacher_shaped_values[mb_teacher_inds],
+                        -args.clip_coef,
+                        args.clip_coef,
+                    )
+                    v_int_loss_clipped = (v_int_clipped - b_teacher_shaped_returns[mb_teacher_inds]) ** 2
+                    v_int_loss_max = torch.max(v_int_loss_unclipped, v_int_loss_clipped)
+                    v_int_loss = 0.5 * v_int_loss_max.mean()
+                else:
+                    v_int_loss = 0.5 * ((newintvalue - b_teacher_shaped_returns[mb_teacher_inds]) ** 2).mean()
+
+                entropy_loss = entropy.mean()
+                loss = (
+                    pg_loss 
+                    - args.ent_coef * entropy_loss 
+                    + v_loss * args.vf_coef 
+                    + v_int_loss * args.vf_coef 
+                    + il_loss * args.il_coef
+                )
+
+                teacher_optimizer.zero_grad()
+                student_optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(teacher_agent.parameters(), args.max_grad_norm)
                 teacher_optimizer.step()
+                student_optimizer.step()
 
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
