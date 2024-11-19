@@ -71,6 +71,8 @@ class Args:
     """coefficient of the value function"""
     il_coef: float = 0.5
     """coefficient of the value function"""
+    kl_imp_coef: float = 0.5
+    """coefficient of the kl importance sampling"""
     max_grad_norm: float = 0.5
     """the maximum norm for the gradient clipping"""
     target_kl: float = None
@@ -361,9 +363,12 @@ if __name__ == "__main__":
                 
                 # Imitation learning objective
                 
-                mb_gen_weight = state_generator.param_ratio(b_teacher_params[mb_teacher_inds], b_teacher_obs[mb_teacher_inds])
+                mb_gen_weight = state_generator.param_ratio(b_teacher_params[mb_teacher_inds], b_teacher_obs[mb_teacher_inds]).exp()
                 mb_gen_weight_total = mb_gen_weight.sum()
                 mb_normalized_gen_weight = mb_gen_weight / mb_gen_weight_total
+                
+                # Regularization term (RP-DRO)
+                gen_weight_kl = -mb_normalized_gen_weight * torch.log(mb_normalized_gen_weight)
                 
                 il_loss1 = -mb_teacher_advantages * student_teacher_ratio * mb_normalized_gen_weight
                 il_loss2 = -mb_teacher_advantages * torch.clamp(student_teacher_ratio, 1 - args.clip_coef, 1 + args.clip_coef) * mb_normalized_gen_weight
@@ -407,6 +412,7 @@ if __name__ == "__main__":
                     + v_loss * args.vf_coef 
                     + v_int_loss * args.vf_coef 
                     + il_loss * args.il_coef
+                    + gen_weight_kl.mean() * args.kl_imp_coef
                 )
 
                 teacher_optimizer.zero_grad()
