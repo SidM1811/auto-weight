@@ -38,8 +38,6 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "CartPole-v1"
-    """the id of the environment"""
     total_timesteps: int = 500000
     """total timesteps of the experiments"""
     learning_rate: float = 2.5e-4
@@ -86,6 +84,8 @@ class Args:
     """the number of iterations (computed in runtime)"""
     num_shaping: int = 6
     """the number of shaping functions"""
+    save_step: int = 25_000
+    """save model every n steps"""
 
 
 def make_env(env_id, idx, capture_video, run_name):
@@ -111,7 +111,12 @@ if __name__ == "__main__":
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    run_name = f"Algo__{args.exp_name}__{args.seed}__{int(time.time())}"
+    last_save = 0
+    
+    if not os.path.exists("models"):
+        os.makedirs("models")
+    
     if args.track:
         import wandb
 
@@ -363,16 +368,23 @@ if __name__ == "__main__":
                 
                 # Imitation learning objective
                 
-                mb_gen_weight = state_generator.param_ratio(b_teacher_params[mb_teacher_inds], b_teacher_obs[mb_teacher_inds]).exp()
-                mb_gen_weight_total = mb_gen_weight.sum()
-                mb_normalized_gen_weight = mb_gen_weight / mb_gen_weight_total
+                mb_gen_weight = state_generator.param_ratio(b_teacher_params[mb_teacher_inds], b_teacher_obs[mb_teacher_inds])
+                mb_normalized_gen_weight = torch.softmax(mb_gen_weight, dim=0)
                 
                 # Regularization term (RP-DRO)
                 gen_weight_kl = -mb_normalized_gen_weight * torch.log(mb_normalized_gen_weight)
                 
-                il_loss1 = -mb_teacher_advantages * student_teacher_ratio * mb_normalized_gen_weight
-                il_loss2 = -mb_teacher_advantages * torch.clamp(student_teacher_ratio, 1 - args.clip_coef, 1 + args.clip_coef) * mb_normalized_gen_weight
+                # IL Loss (trying to minimize performance gap)
+                
+                il_loss1 = -mb_teacher_advantages * student_teacher_ratio * mb_normalized_gen_weight.detach().clone()
+                il_loss2 = -mb_teacher_advantages * torch.clamp(student_teacher_ratio, 1 - args.clip_coef, 1 + args.clip_coef) * mb_normalized_gen_weight.detach().clone()
                 il_loss = torch.max(il_loss1, il_loss2).mean()
+                
+                # IS Loss (trying to maximize performance gap)
+                
+                is_loss1 = -mb_teacher_advantages * student_teacher_ratio.detach().clone() * mb_normalized_gen_weight
+                is_loss2 = -mb_teacher_advantages * torch.clamp(student_teacher_ratio, 1 - args.clip_coef, 1 + args.clip_coef).detach().clone() * mb_normalized_gen_weight
+                is_loss = -torch.max(is_loss1, is_loss2).mean()
 
                 newvalue = newextvalue + newintvalue
                 # Value loss
@@ -440,6 +452,10 @@ if __name__ == "__main__":
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        
+        if global_step - last_save > args.save_step or global_step >= args.total_timesteps:
+            torch.save(student_agent.state_dict(), f"models/student_agent_{iteration}.pth")
+            torch.save(teacher_agent.state_dict(), f"models/teacher_agent_{iteration}.pth")
 
     envs.close()
     writer.close()

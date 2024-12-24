@@ -7,7 +7,6 @@
     "wandb_project_name": "cleanRL",
     "wandb_entity": null,
     "capture_video": false,
-    "env_id": "LunarLander-v2",
     "total_timesteps": 500000,
     "learning_rate": 0.00025,
     "num_steps": 4,

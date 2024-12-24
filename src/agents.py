@@ -112,7 +112,7 @@ class ParamConditionedAgent(nn.Module):
         param_adj = self.param_critic(params)
         return self.ext_critic(x), self.int_critic(x) * (1. + param_adj)
 
-    def get_action_and_value(self, x, params=None, action=None):
+    def get_action_and_value(self, x, action=None, params=None):
         # param normalization is important
         if params is None:
             if self.params is None:
