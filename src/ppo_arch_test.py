@@ -195,7 +195,10 @@ if __name__ == "__main__":
 
         # bootstrap value if not done
         with torch.no_grad():
-            next_value = agent.get_value(next_obs)[0].reshape(1, -1)
+            next_ext_value, next_int_value = agent.get_value(next_obs)
+            next_ext_value = next_ext_value.reshape(1, -1)
+            next_int_value = next_int_value.reshape(1, -1)
+            next_value = next_ext_value + next_int_value
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
@@ -225,7 +228,8 @@ if __name__ == "__main__":
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
-                _, newlogprob, entropy, newvalue, _ = agent.get_action_and_value(b_obs[mb_inds], action = b_actions.long()[mb_inds])
+                _, newlogprob, entropy, newextvalue, newintvalue = agent.get_action_and_value(b_obs[mb_inds], action = b_actions.long()[mb_inds])
+                newvalue = newextvalue + newintvalue
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 

@@ -342,13 +342,13 @@ if __name__ == "__main__":
                         )
                         studentv_clipped = studentv_clipped
                         studentv_loss_clipped = (studentv_clipped - b_student_returns[mb_student_inds]) ** 2
-                        v_loss_max = torch.max(studentv_loss_unclipped, studentv_loss_clipped)
-                        v_loss = 0.5 * v_loss_max.mean()
+                        studentv_loss_max = torch.max(studentv_loss_unclipped, studentv_loss_clipped)
+                        studentv_loss = 0.5 * studentv_loss_max.mean()
                     else:
-                        v_loss = 0.5 * ((studentnewvalue - b_student_returns[mb_student_inds]) ** 2).mean()
+                        studentv_loss = 0.5 * ((studentnewvalue - b_student_returns[mb_student_inds]) ** 2).mean()
 
                     studententropy_loss = studententropy.mean()
-                    loss = studentpg_loss - args.ent_coef * studententropy_loss + v_loss * args.vf_coef
+                    loss = studentpg_loss - args.ent_coef * studententropy_loss + studentv_loss * args.vf_coef
                 else:
                     loss = 0.0
                     
@@ -420,8 +420,8 @@ if __name__ == "__main__":
                     
                     # Imitation loss
                     
-                    pdl_term1 = 0.0 * mb_teacher_advantages * studentratio
-                    pdl_term2 = 0.0 * mb_teacher_advantages * torch.clamp(studentratio, 1.0 - args.clip_coef, 1.0 + args.clip_coef)
+                    pdl_term1 = mb_teacher_advantages * studentratio
+                    pdl_term2 = mb_teacher_advantages * torch.clamp(studentratio, 1.0 - args.clip_coef, 1.0 + args.clip_coef)
                     
                     il_loss1 = -mb_gen_weight.clone().detach() * pdl_term1
                     il_loss2 = -mb_gen_weight.clone().detach() * pdl_term2
@@ -435,7 +435,6 @@ if __name__ == "__main__":
                     
                     loss += args.il_coef * il_loss + args.is_coef * is_loss + args.kl_imp_coef * norm_gen_loss
             
-                
                 student_optimizer.zero_grad()
                 teacher_optimizer.zero_grad()
                 loss.backward()

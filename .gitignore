@@ -1,3 +1,6 @@
 .gitignore
 TODO
-src/runs/
+src/runs/*
+src/models/*
+src/data/*
+src/__pycache__/*
