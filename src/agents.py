@@ -38,7 +38,7 @@ class StateGenerator(nn.Module):
         encoded_state = self.state_encoder(state)
         return self.state_proj(encoded_state)
     
-    def param_ratio(self, param, state):
+    def param_ratio(self, state, param):
         encoded_param = self.param_encoder(param)
         encoded_state = self.state_encoder(state)
         return self.param_proj(encoded_param * encoded_state)

@@ -472,6 +472,8 @@ class LunarLander(gym.Env, EzPickle):
 
     def step(self, action):
         assert self.lander is not None
+        
+        # prev_state = self.readout_external_state()
 
         # Update wind and apply to the lander
         assert self.lander is not None, "You forgot to call reset()"
@@ -636,11 +638,9 @@ class LunarLander(gym.Env, EzPickle):
         assert len(state) == 8
 
         reward = 0
-
-        reward -= (
-            m_power * 0.30
-        )  # less fuel spent is better, about -30 for heuristic landing
-        reward -= s_power * 0.03
+        
+        # Default shaping reward
+        # reward += self.calculate_shaping_reward(prev_state, state, action)
 
         terminated = False
         if self.game_over or abs(state[0]) >= 1.0:
@@ -655,7 +655,7 @@ class LunarLander(gym.Env, EzPickle):
         # truncation=False as the time limit is handled by the `TimeLimit` wrapper added during `make`
         return np.array(state, dtype=np.float32), reward, terminated, False, {}
     
-    
+    # Stateless shaping reward
     def calculate_shaping_reward(self, prev_state, state, action, shaping_weights=None):
         if shaping_weights is None:
             shaping_weights = {
