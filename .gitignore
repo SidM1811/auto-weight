@@ -1,6 +1,6 @@
-.gitignore
 TODO
 src/runs/*
 src/models/*
 src/data/*
 src/__pycache__/*
+src/wandb/*

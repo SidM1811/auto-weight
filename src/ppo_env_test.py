@@ -87,7 +87,6 @@ class Args:
     
 gym.register("LunarLanderCustom", LunarLander)
 
-
 def make_env_id(env_id, idx, capture_video, run_name):
     def thunk():
         if capture_video and idx == 0:

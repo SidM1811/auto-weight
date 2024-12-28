@@ -35,10 +35,10 @@ class Args:
     """the entity (team) of wandb's project"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
-
+    env_id: str = "LunarLander-v3"
+    """the environment id"""
+    
     # Algorithm specific arguments
-    env_id: str = "CartPole-v1"
-    """the id of the environment"""
     total_timesteps: int = 500000
     """total timesteps of the experiments"""
     learning_rate: float = 2.5e-4
@@ -84,6 +84,7 @@ class Args:
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
 
+# gym.register("LunarLanderCustom", entry_point="lunarlander_mod:LunarLanderCustom")
 
 def make_env(env_id, idx, capture_video, run_name):
     def thunk():
@@ -175,7 +176,9 @@ if __name__ == "__main__":
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value, _ = agent.get_action_and_value(next_obs)
+                action, logprob, _, extvalue, intvalue = agent.get_action_and_value(next_obs)
+                value = extvalue + intvalue
+                # value = extvalue
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
@@ -199,6 +202,7 @@ if __name__ == "__main__":
             next_ext_value = next_ext_value.reshape(1, -1)
             next_int_value = next_int_value.reshape(1, -1)
             next_value = next_ext_value + next_int_value
+            # next_value = next_ext_value
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
@@ -230,6 +234,7 @@ if __name__ == "__main__":
                 mb_inds = b_inds[start:end]
                 _, newlogprob, entropy, newextvalue, newintvalue = agent.get_action_and_value(b_obs[mb_inds], action = b_actions.long()[mb_inds])
                 newvalue = newextvalue + newintvalue
+                # newvalue = newextvalue
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
