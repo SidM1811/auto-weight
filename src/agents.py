@@ -99,8 +99,8 @@ class ParamConditionedAgent(nn.Module):
             nn.Tanh(),
             layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
         )
-        self.param_critic = nn.Linear(param_dim, 1)
-        self.param_actor = nn.Linear(param_dim, envs.single_action_space.n)
+        self.param_critic = layer_init(nn.Linear(param_dim, 1), std=0.01)
+        self.param_actor = layer_init(nn.Linear(param_dim, envs.single_action_space.n), std=0.01)
         self.params = None
 
     def get_value(self, x, params=None):

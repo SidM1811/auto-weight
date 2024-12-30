@@ -40,8 +40,8 @@ class Args:
     """total timesteps of the experiments"""
     learning_rate: float = 2.5e-4
     """the learning rate of the optimizer"""
-    num_student_envs: int = 8
-    num_teacher_envs: int = 64
+    num_student_envs: int = 4
+    num_teacher_envs: int = 4
     """the number of parallel game environments"""
     num_steps: int = 128
     """the number of steps to run in each environment per policy rollout"""
@@ -65,11 +65,11 @@ class Args:
     """coefficient of the entropy"""
     vf_coef: float = 0.5
     """coefficient of the value function"""
-    il_coef: float = 0.5
+    il_coef: float = 0.0
     """coefficient of the il loss"""
-    is_coef: float = 0.5
+    is_coef: float = 0.0
     """coefficient of the is loss"""
-    kl_imp_coef: float = 0.5
+    kl_imp_coef: float = 0.0
     """coefficient of the kl importance sampling"""
     max_grad_norm: float = 0.5
     """the maximum norm for the gradient clipping"""
@@ -102,12 +102,12 @@ def make_env_id(env_id, idx, capture_video, run_name):
     return thunk
 
 def sample_teacher_params(num_teacher_envs):
-    # default_shaping = torch.tensor([100.0, 100.0, 100.0, 10.0, 0.3, 0.03])
-    default_shaping = torch.zeros(args.num_shaping, dtype = torch.float32)
-    return default_shaping.repeat(num_teacher_envs, 1)
+    random_weights = torch.rand(num_teacher_envs, 6) * 2.0
+    default_shaping = torch.tensor([100.0, 100.0, 100.0, 10.0, 0.3, 0.03]).repeat(num_teacher_envs, 1)
+    return default_shaping * random_weights
 
 if __name__ == "__main__":
-    args_json = json.load(open('./main_config.json',))
+    args_json = json.load(open('./combined_config.json',))
     # args = tyro.cli(Args)
     args = Args(**args_json)
     args.num_envs = args.num_student_envs + args.num_teacher_envs
@@ -170,6 +170,7 @@ if __name__ == "__main__":
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
     values = torch.zeros((args.num_steps, args.num_envs)).to(device)
     shaped_values = torch.zeros((args.num_steps, args.num_teacher_envs)).to(device)
+    params = torch.zeros((args.num_steps, args.num_teacher_envs, args.num_shaping)).to(device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -193,6 +194,7 @@ if __name__ == "__main__":
             global_step += args.num_envs
             obs[step] = next_obs
             dones[step] = next_done
+            params[step] = teacher_params
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
@@ -214,18 +216,18 @@ if __name__ == "__main__":
             # TRY NOT TO MODIFY: execute the game and log data.
             current_obs = next_obs.clone()
             next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
+            shaped_reward = np.zeros(args.num_teacher_envs)
             # shaped_reward = np.array([
             #     env.unwrapped.calculate_shaping_reward(current_obs[idx + args.num_student_envs], next_obs[idx + args.num_student_envs], action, shaping_weights=teacher_params[idx])
             #     for idx, (env, action) in enumerate(zip(envs.envs[args.num_student_envs:], action[args.num_student_envs:]))
             # ])
-            shaped_reward = np.zeros(args.num_teacher_envs)
             next_done = np.logical_or(terminations, truncations)
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             shaped_rewards[step] = torch.tensor(shaped_reward).to(device).view(-1)
             
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
             
-            # add shaped reward to teacher reward
+            # add shaped reward to teacher reward - termination handling
             rewards[step][args.num_student_envs:] += torch.where(
                 next_done[args.num_student_envs:] > 0.0, 
                 shaped_rewards[step], 
@@ -234,7 +236,7 @@ if __name__ == "__main__":
             if infos and "episode" in infos:
                 for idx, finished in enumerate(infos["_episode"]):
                     ts_prefix = "teacher" if idx >= args.num_student_envs else "student"
-                    if finished and ts_prefix == "teacher":
+                    if finished:
                         print(f"global_step={global_step}, episodic_{ts_prefix}_return={infos['episode']['r'][idx]}, episodic_{ts_prefix}_length={infos['episode']['l'][idx]}")
                         writer.add_scalar(f"charts/episodic_{ts_prefix}_return", infos["episode"]["r"][idx], global_step)
                         writer.add_scalar(f"charts/episodic_{ts_prefix}_length", infos["episode"]["l"][idx], global_step)
@@ -291,7 +293,7 @@ if __name__ == "__main__":
         b_teacher_shaped_returns = shaped_returns.reshape(-1)
         b_teacher_shaped_values = shaped_values.reshape(-1)
         
-        b_teacher_params = torch.cat([teacher_params for _ in range(args.num_steps)], dim=0).to(device).reshape(-1, args.num_shaping)
+        b_teacher_params = params.reshape(-1, args.num_shaping)
 
         # Optimizing the policy and value network
         b_teacher_inds = np.arange(args.num_teacher_envs * args.num_steps)
@@ -305,7 +307,7 @@ if __name__ == "__main__":
         for epoch in range(args.update_epochs):
             # np.random.shuffle(b_inds)
             b_inds = b_inds[torch.randperm(b_inds.size(0))]
-            for start in range(0, (args.num_student_envs + args.num_teacher_envs) * args.num_steps, args.minibatch_size):
+            for start in range(0, args.num_envs * args.num_steps, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
                 mb_student_inds = mb_inds[mb_inds[:, 1] == 0][:, 0].long()
