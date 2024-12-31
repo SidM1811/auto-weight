@@ -101,8 +101,8 @@ def make_env_id(env_id, idx, capture_video, run_name):
 
     return thunk
 
-def sample_teacher_params(num_envs):
-    random_weights = torch.rand(num_envs, args.num_shaping) * 2.0
+def sample_teacher_params(num_teacher_envs):
+    random_weights = torch.rand(num_teacher_envs, 6) * 2.0
     default_shaping = torch.tensor([100.0, 100.0, 100.0, 10.0, 0.3, 0.03]).repeat(num_teacher_envs, 1)
     return default_shaping * random_weights
 
@@ -165,15 +165,12 @@ if __name__ == "__main__":
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
     actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
     logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     shaped_rewards = torch.zeros((args.num_steps, args.num_teacher_envs)).to(device)
-    
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    
     values = torch.zeros((args.num_steps, args.num_envs)).to(device)
     shaped_values = torch.zeros((args.num_steps, args.num_teacher_envs)).to(device)
-    
+    pdl_values = torch.zeros((args.num_steps, args.num_teacher_envs)).to(device)
     params = torch.zeros((args.num_steps, args.num_teacher_envs, args.num_shaping)).to(device)
 
     # TRY NOT TO MODIFY: start the game
@@ -182,11 +179,10 @@ if __name__ == "__main__":
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
-    
-    # Teacher params fixed for the iteration
-        teacher_params = sample_teacher_params(args.num_teacher_envs).to(device)
 
     for iteration in range(1, args.num_iterations + 1):
+        # Teacher params fixed for the iteration
+        teacher_params = sample_teacher_params(args.num_teacher_envs).to(device)
         
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
@@ -199,46 +195,41 @@ if __name__ == "__main__":
             global_step += args.num_envs
             obs[step] = next_obs
             dones[step] = next_done
-            params[step] = teacher_params # The params stay constant across an episode
+            params[step] = teacher_params
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
+                
                 action_student, logprob_student, _, value_student = student_agent.get_action_and_value(next_obs[:args.num_student_envs])
                 action_teacher, logprob_teacher, _, value_ext_teacher, value_int_teacher = teacher_agent.get_action_and_value(next_obs[args.num_student_envs:], params = teacher_params)
                 
-            value_teacher = value_ext_teacher
+            value_teacher = value_ext_teacher + value_int_teacher
             action = torch.cat([action_student, action_teacher])
             logprob = torch.cat([logprob_student, logprob_teacher])
-            
             value = torch.cat([value_student, value_teacher])
             shaped_value = value_int_teacher
             
             values[step] = value.flatten()
             shaped_values[step] = shaped_value.flatten()
-            
             actions[step] = action
             logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
             current_obs = next_obs.clone()
             next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
-            shaped_reward = np.array([
-                env.unwrapped.calculate_shaping_reward(current_obs[idx + args.num_student_envs], next_obs[idx + args.num_student_envs], action, shaping_weights=teacher_params[idx])
-                for idx, (env, action) in enumerate(zip(envs.envs[args.num_student_envs:], action[args.num_student_envs:]))
-            ])
-            
+            shaped_reward = np.zeros(args.num_teacher_envs)
+            # shaped_reward = np.array([
+            #     env.unwrapped.calculate_shaping_reward(current_obs[idx + args.num_student_envs], next_obs[idx + args.num_student_envs], action, shaping_weights=teacher_params[idx])
+            #     for idx, (env, action) in enumerate(zip(envs.envs[args.num_student_envs:], action[args.num_student_envs:]))
+            # ])
             next_done = np.logical_or(terminations, truncations)
-            done_idx = np.where(next_done)[0]
-            num_done = len(done_idx)
-            teacher_params[done_idx] = sample_teacher_params(num_done).to(device) # Renews shaping param for new episode
-            
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             shaped_rewards[step] = torch.tensor(shaped_reward).to(device).view(-1)
             
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
             
             # add shaped reward to teacher reward - termination handling
-            shaped_rewards[step] = torch.where(
+            rewards[step][args.num_student_envs:] += torch.where(
                 next_done[args.num_student_envs:] > 0.0, 
                 shaped_rewards[step], 
                 torch.tensor(0.0).to(device))
@@ -257,31 +248,47 @@ if __name__ == "__main__":
             teacher_next_ext_value, teacher_next_int_value = teacher_agent.get_value(next_obs[args.num_student_envs:], params = teacher_params)
             teacher_next_ext_value = teacher_next_ext_value.reshape(1, -1)
             teacher_next_int_value = teacher_next_int_value.reshape(1, -1)
+            teacher_next_value = teacher_next_ext_value + teacher_next_int_value
             
-            next_value = torch.cat([student_next_value, teacher_next_ext_value], axis=1).flatten()
+            pdl_rewards = rewards[args.num_student_envs:] # Need this for PDL
+            pdl_student_next_value = student_agent.get_value(next_obs[args.num_student_envs:]).reshape(1, -1)
+            
+            next_value = torch.cat([student_next_value, teacher_next_value], axis=1).flatten()
             next_shaped_value = teacher_next_int_value.flatten()
+            pdl_next_value = pdl_student_next_value.flatten()
             
             advantages = torch.zeros_like(rewards).to(device)
             shaped_advantages = torch.zeros_like(shaped_rewards).to(device)
+            pdl_advantages = torch.zeros_like(shaped_rewards).to(device)
             
             lastgaelam = 0
             lastshapedgaelam = 0
+            lastpdllam = 0
+            
             for t in reversed(range(args.num_steps)):
+                pdl_values[t] = pdl_next_value
                 if t == args.num_steps - 1:
                     nextnonterminal = 1.0 - next_done
                     nextvalues = next_value
                     nextshapedvalues = next_shaped_value
+                    nextpdlvalues = pdl_next_value
                 else:
                     nextnonterminal = 1.0 - dones[t + 1]
                     nextvalues = values[t + 1]
                     nextshapedvalues = shaped_values[t + 1]
+                    nextpdlvalues = pdl_next_value[t + 1]
+                
                 delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
                 shaped_delta = shaped_rewards[t] + args.gamma * nextshapedvalues * nextnonterminal[args.num_student_envs:] - shaped_values[t]
+                pdl_delta = pdl_rewards[t] + args.gamma * nextpdlvalues * nextnonterminal[args.num_student_envs:] - pdl_next_value[t]   
                 
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
                 shaped_advantages[t] = lastshapedgaelam = shaped_delta + args.gamma * args.gae_lambda * nextnonterminal[args.num_student_envs:] * lastshapedgaelam
+                pdl_advantages[t] = lastpdllam = pdl_delta + args.gamma * args.gae_lambda * nextnonterminal[args.num_student_envs:] * lastpdllam
+            
             returns = advantages + values
             shaped_returns = shaped_advantages + shaped_values
+            pdl_returns = pdl_advantages + pdl_next_value
 
         # Student batch
         b_student_obs = obs[:, :args.num_student_envs].reshape((-1,) + envs.single_observation_space.shape)
@@ -304,6 +311,10 @@ if __name__ == "__main__":
         b_teacher_shaped_advantages = shaped_advantages.reshape(-1)
         b_teacher_shaped_returns = shaped_returns.reshape(-1)
         b_teacher_shaped_values = shaped_values.reshape(-1)
+        
+        b_pdl_advantages = pdl_advantages.reshape(-1)
+        b_pdl_returns = pdl_returns.reshape(-1)
+        b_pdl_values = pdl_values.reshape(-1)
         
         b_teacher_params = params.reshape(-1, args.num_shaping)
 
@@ -370,7 +381,7 @@ if __name__ == "__main__":
                     
                     _, studentlogprob, studententropy, studentnewvalue = student_agent.get_action_and_value(b_teacher_obs[mb_teacher_inds], action = b_teacher_actions.long()[mb_teacher_inds])
                     _, teacherlogprob, teacherentropy, teachernewextvalue, teachernewintvalue = teacher_agent.get_action_and_value(b_teacher_obs[mb_teacher_inds], action = b_teacher_actions.long()[mb_teacher_inds], params = b_teacher_params[mb_teacher_inds])
-                    teachernewvalue = teachernewextvalue
+                    teachernewvalue = teachernewextvalue + teachernewintvalue
                     
                     studentratio = (studentlogprob - b_teacher_logprobs[mb_teacher_inds]).exp()
                     teacherratio = (teacherlogprob - b_teacher_logprobs[mb_teacher_inds]).exp()

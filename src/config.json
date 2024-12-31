@@ -3,7 +3,7 @@
     "seed": 1,
     "torch_deterministic": true,
     "cuda": true,
-    "track": true,
+    "track": false,
     "wandb_project_name": "cleanRL",
     "wandb_entity": "adaptune",
     "capture_video": false,

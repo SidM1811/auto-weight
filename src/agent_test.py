@@ -136,10 +136,11 @@ if __name__ == "__main__":
     agent = ParamConditionedAgent(envs, param_dim=6).to(device)
     agent.load_state_dict(
         torch.load(
-            '/home/skunk/auto-weight/src/models/LunarLander-v3__ppo__1__1735176718/498624.pt'
+            '/home/skunk/auto-weight/src/models/LunarLanderCustom__ppo__1__1735581665/teacher_agent_31250.pth'
         )
     )
-    agent.params = torch.zeros(6).to(device)
+    agent.params = torch.tensor([100.0, 100.0, 100.0, 10.0, 0.30, 0.03]).to(device)
+    # agent.params = torch.zeros(6).to(device)
     
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
