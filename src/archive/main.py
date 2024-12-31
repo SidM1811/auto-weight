@@ -13,8 +13,8 @@ import tyro
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from agents import Agent, ParamConditionedAgent, StateGenerator
-from lunarlander_mod import LunarLander
+from helpers.agents import Agent, ParamConditionedAgent, StateGenerator
+from helpers.lunarlander_mod import LunarLander
 
 import json
 

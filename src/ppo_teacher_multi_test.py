@@ -11,7 +11,7 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 import torch.nn as nn
 
-from agents import Agent, ParamConditionedAgent, StateGenerator
+from helpers.agents import Agent, ParamConditionedAgent, StateGenerator
 
 import json
 

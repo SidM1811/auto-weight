@@ -10,7 +10,8 @@ import torch
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 
-from agents import Agent, ParamConditionedAgent, StateGenerator
+from helpers.agents import Agent, ParamConditionedAgent, StateGenerator
+from helpers.lunarlander_mod import LunarLander
 
 import json
 
@@ -87,7 +88,7 @@ class Args:
     save_step: int = 25_000
     """save model every n steps"""
     
-gym.register("LunarLanderCustom", entry_point="lunarlander_mod:LunarLander")
+gym.register("LunarLanderCustom", entry_point=LunarLander)
 
 def make_env_id(env_id, idx, capture_video, run_name):
     def thunk():
@@ -103,11 +104,11 @@ def make_env_id(env_id, idx, capture_video, run_name):
 
 def sample_teacher_params(num_envs):
     random_weights = torch.rand(num_envs, args.num_shaping) * 2.0
-    default_shaping = torch.tensor([100.0, 100.0, 100.0, 10.0, 0.3, 0.03]).repeat(num_teacher_envs, 1)
+    default_shaping = torch.tensor([100.0, 100.0, 100.0, 10.0, 0.3, 0.03]).repeat(num_envs, 1)
     return default_shaping * random_weights
 
 if __name__ == "__main__":
-    args_json = json.load(open('./combined_config.json',))
+    args_json = json.load(open('config/combined_config.json'))
     # args = tyro.cli(Args)
     args = Args(**args_json)
     args.num_envs = args.num_student_envs + args.num_teacher_envs
@@ -184,7 +185,7 @@ if __name__ == "__main__":
     next_done = torch.zeros(args.num_envs).to(device)
     
     # Teacher params fixed for the iteration
-        teacher_params = sample_teacher_params(args.num_teacher_envs).to(device)
+    teacher_params = sample_teacher_params(args.num_teacher_envs).to(device)
 
     for iteration in range(1, args.num_iterations + 1):
         
@@ -228,7 +229,8 @@ if __name__ == "__main__":
             ])
             
             next_done = np.logical_or(terminations, truncations)
-            done_idx = np.where(next_done)[0]
+            
+            done_idx = np.where(next_done[args.num_student_envs:])[0]
             num_done = len(done_idx)
             teacher_params[done_idx] = sample_teacher_params(num_done).to(device) # Renews shaping param for new episode
             

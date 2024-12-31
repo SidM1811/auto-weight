@@ -13,7 +13,7 @@ import tyro
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from agents import Agent, ParamConditionedAgent
+from helpers.agents import Agent, ParamConditionedAgent
 
 import json
 

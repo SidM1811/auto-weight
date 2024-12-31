@@ -1,6 +1,6 @@
 from MCMC import MCMC
-from lunarlander_mod import LunarLander
-import agents
+from helpers.lunarlander_mod import LunarLander
+import helpers.agents as agents
 
 import numpy as np
 import torch
