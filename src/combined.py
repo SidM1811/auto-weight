@@ -484,7 +484,7 @@ if __name__ == "__main__":
         writer.add_scalar("losses/teacher_value_loss", teacherv_loss.item(), global_step)
         writer.add_scalar("losses/teacher_policy_loss", teacherpg_loss.item(), global_step)
         writer.add_scalar("losses/teacher_entropy", teacherentropy_loss.item(), global_step)
-        writer.add_scalar("losses/tecaher_old_approx_kl", old_approx_kl.item(), global_step)
+        writer.add_scalar("losses/teacher_old_approx_kl", old_approx_kl.item(), global_step)
         writer.add_scalar("losses/tecaher_approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/teacher_clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/teacher_explained_variance", explained_var, global_step)
