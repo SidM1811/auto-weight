@@ -291,6 +291,12 @@ if __name__ == "__main__":
                 shaped_advantages[t] = lastshapedgaelam = shaped_delta + args.gamma * args.gae_lambda * nextnonterminal[args.num_student_envs:] * lastshapedgaelam
             returns = advantages + values
             shaped_returns = shaped_advantages + shaped_values
+            
+            # print(shaped_values)
+            # print(shaped_returns)
+            # print(shaped_advantages)
+            # print(values)
+            # print(returns)
 
         # Student batch
         b_student_obs = obs[:, :args.num_student_envs].reshape((-1,) + envs.single_observation_space.shape)
@@ -401,8 +407,10 @@ if __name__ == "__main__":
                         
                     # Policy loss
                     
-                    teacherpg_loss1 = -teacherratio * mb_teacher_advantages
-                    teacherpg_loss2 = -torch.clamp(teacherratio, 1.0 - args.clip_coef, 1.0 + args.clip_coef) * mb_teacher_advantages
+                    mb_teacher_total_advantages = mb_teacher_advantages + mb_teacher_shaped_advantages
+                    
+                    teacherpg_loss1 = -teacherratio * mb_teacher_total_advantages
+                    teacherpg_loss2 = -torch.clamp(teacherratio, 1.0 - args.clip_coef, 1.0 + args.clip_coef) * mb_teacher_total_advantages
                     teacherpg_loss = torch.max(teacherpg_loss1, teacherpg_loss2).mean()
                     
                     # Value loss
