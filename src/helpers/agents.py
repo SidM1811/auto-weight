@@ -71,6 +71,64 @@ class Agent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy(), self.critic(x)
     
+# class ParamConditionedAgent(nn.Module):
+    
+#     def __init__(self, envs, param_dim):
+#         super().__init__()
+#         # Captures external value function
+#         self.ext_critic = nn.Sequential(
+#             layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+#             nn.Tanh(),
+#             layer_init(nn.Linear(64, 64)),
+#             nn.Tanh(),
+#             layer_init(nn.Linear(64, 1), std=1.0),
+#         )
+#         # Captures internal value function
+#         self.int_critic = nn.Sequential(
+#             layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+#             nn.Tanh(),
+#             layer_init(nn.Linear(64, 64)),
+#             nn.Tanh(),
+#             layer_init(nn.Linear(64, 1), std=1.0),
+#         )
+#         # Policy
+#         self.actor = nn.Sequential(
+#             layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+#             nn.Tanh(),
+#             layer_init(nn.Linear(64, 64)),
+#             nn.Tanh(),
+#             layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
+#         )
+#         self.param_critic = layer_init(nn.Linear(param_dim, 1), std=0.01)
+#         self.param_actor = layer_init(nn.Linear(param_dim, envs.single_action_space.n), std=0.01)
+#         self.params = None
+
+#     def get_value(self, x, params=None):
+#         # param normalization is important
+#         if params is None:
+#             if self.params is None:
+#                 raise ValueError("Params not set")
+#             params = self.params
+#         param_adj = self.param_critic(params)
+#         return self.ext_critic(x), self.int_critic(x) * (1. + param_adj)
+
+#     def get_action_and_value(self, x, action=None, params=None):
+#         # param normalization is important
+#         if params is None:
+#             if self.params is None:
+#                 raise ValueError("Params not set")
+#             params = self.params
+#         param_adj = self.param_actor(params)
+#         base_logits = self.actor(x)
+#         #  Single obs, action multi-params
+#         if len(param_adj.shape) < len(base_logits.shape):
+#             param_adj = param_adj.unsqueeze(-1)
+#         logits = base_logits * (1. + param_adj)
+#         probs = Categorical(logits=logits)
+#         if action is None:
+#             action = probs.sample()
+#         return action, probs.log_prob(action), probs.entropy(), self.ext_critic(x), self.int_critic(x) * (1. + self.param_critic(params))
+
 class ParamConditionedAgent(nn.Module):
     
     def __init__(self, envs, param_dim):
@@ -85,7 +143,7 @@ class ParamConditionedAgent(nn.Module):
         )
         # Captures internal value function
         self.int_critic = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod() + param_dim, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
@@ -93,14 +151,12 @@ class ParamConditionedAgent(nn.Module):
         )
         # Policy
         self.actor = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod() + param_dim, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
         )
-        self.param_critic = layer_init(nn.Linear(param_dim, 1), std=0.01)
-        self.param_actor = layer_init(nn.Linear(param_dim, envs.single_action_space.n), std=0.01)
         self.params = None
 
     def get_value(self, x, params=None):
@@ -109,8 +165,8 @@ class ParamConditionedAgent(nn.Module):
             if self.params is None:
                 raise ValueError("Params not set")
             params = self.params
-        param_adj = self.param_critic(params)
-        return self.ext_critic(x), self.int_critic(x) * (1. + param_adj)
+        int_x = torch.cat([x, params], dim=-1)
+        return self.ext_critic(x), self.int_critic(int_x)
 
     def get_action_and_value(self, x, action=None, params=None):
         # param normalization is important
@@ -118,13 +174,9 @@ class ParamConditionedAgent(nn.Module):
             if self.params is None:
                 raise ValueError("Params not set")
             params = self.params
-        param_adj = self.param_actor(params)
-        base_logits = self.actor(x)
-        #  Single obs, action multi-params
-        if len(param_adj.shape) < len(base_logits.shape):
-            param_adj = param_adj.unsqueeze(-1)
-        logits = base_logits * (1. + param_adj)
+        int_x = torch.cat([x, params], dim=-1)
+        logits = self.actor(int_x)
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.ext_critic(x), self.int_critic(x) * (1. + self.param_critic(params))
+        return action, probs.log_prob(action), probs.entropy(), self.ext_critic(x), self.int_critic(int_x)
