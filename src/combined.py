@@ -104,15 +104,15 @@ def make_env_id(env_id, idx, capture_video, run_name):
 
     return thunk
 
-# def sample_teacher_params(num_envs):
-#     random_weights = torch.rand(num_envs, args.num_shaping) * 2.0
-#     default_shaping = torch.tensor([100.0, 100.0, 100.0, 10.0, 0.3, 0.03]).repeat(num_envs, 1)
-#     return default_shaping * random_weights
-
 def sample_teacher_params(num_envs):
-    random_weights = torch.rand(num_envs, args.num_shaping)
-    random_weights /= random_weights.sum(dim=1, keepdim=True)
-    return random_weights
+    random_weights = torch.rand(num_envs, args.num_shaping) * 2.0
+    default_shaping = torch.tensor([100.0, 100.0, 100.0, 10.0, 0.3, 0.03]).repeat(num_envs, 1)
+    return default_shaping * random_weights
+
+# def sample_teacher_params(num_envs):
+#     random_weights = torch.rand(num_envs, args.num_shaping)
+#     random_weights /= random_weights.sum(dim=1, keepdim=True)
+#     return random_weights
 
 if __name__ == "__main__":
     args_json = json.load(open('config/combined_config.json'))
@@ -249,8 +249,8 @@ if __name__ == "__main__":
             # add shaped reward to teacher reward - termination handling
             shaped_rewards[step] = torch.where(
                 next_done[args.num_student_envs:] > 0.0, 
-                shaped_rewards[step], 
-                torch.tensor(0.0).to(device))
+                torch.tensor(0.0).to(device),
+                shaped_rewards[step])
             
             if infos and "episode" in infos:
                 for idx, finished in enumerate(infos["_episode"]):
@@ -478,10 +478,13 @@ if __name__ == "__main__":
         y_pred, y_true = b_teacher_values.cpu().numpy(), b_teacher_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+        
+        # writer.add_scalar("losses/teacher_value", (shaped_).item(), global_step)
 
         # # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", teacher_optimizer.param_groups[0]["lr"], global_step)
         writer.add_scalar("losses/teacher_value_loss", teacherv_loss.item(), global_step)
+        writer.add_scalar("losses/teacher_shaped_value_loss", teacherintv_loss.item(), global_step)
         writer.add_scalar("losses/teacher_policy_loss", teacherpg_loss.item(), global_step)
         writer.add_scalar("losses/teacher_entropy", teacherentropy_loss.item(), global_step)
         writer.add_scalar("losses/teacher_old_approx_kl", old_approx_kl.item(), global_step)

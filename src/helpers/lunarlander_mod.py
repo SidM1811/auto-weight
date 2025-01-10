@@ -473,7 +473,7 @@ class LunarLander(gym.Env, EzPickle):
     def step(self, action):
         assert self.lander is not None
         
-        prev_state = self.readout_external_state()
+        # prev_state = self.readout_external_state()
 
         # Update wind and apply to the lander
         assert self.lander is not None, "You forgot to call reset()"
@@ -639,8 +639,8 @@ class LunarLander(gym.Env, EzPickle):
 
         reward = 0
         
-        # Default shaping reward
-        reward += self.calculate_shaping_reward(prev_state, state, action)
+        # # Default shaping reward
+        # reward += self.calculate_shaping_reward(prev_state, state, action)
 
         terminated = False
         if self.game_over or abs(state[0]) >= 1.0:
@@ -957,3 +957,17 @@ class LunarLanderContinuous:
 if __name__ == "__main__":
     env = gym.make("LunarLander-v3", render_mode="rgb_array")
     demo_heuristic_lander(env, render=True)
+    
+    
+# class ExtIntWrapper(gym.Wrapper):
+#     def __init__(self, env):
+#         super.__init__(env)
+#         self.env = env
+#         self.prev_state = None
+#         self.shaping_weights = None
+        
+#     def step(self, action):
+#         state, reward, done, info = self.env.step(action)
+#         shaped_reward = self.env.calculate_shaping_reward(self.prev_state, state, action, shaping_weights=self.shaping_weights)
+#         self.prev_state = state
+#         return state, reward, shaped_reward, done, info

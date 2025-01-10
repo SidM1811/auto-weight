@@ -158,6 +158,30 @@ class ParamConditionedAgent(nn.Module):
             layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
         )
         self.params = None
+        self.running_mean = None
+        self.running_var = None
+        
+        # Param normalization
+        def param_hook(_, input):
+            assert len(input) == 1
+            decay = 0.99
+            eps = 1e-5
+            raw_params = input[0][:,-param_dim:]
+            
+            if self.running_mean is None:
+                self.running_mean = raw_params.mean(dim=0)
+                self.running_var = (raw_params ** 2).mean(dim=0)
+            
+            # Update statistics with raw parameters
+            self.running_mean = decay * self.running_mean + (1 - decay) * raw_params.mean(dim=0)
+            self.running_var = decay * self.running_var + (1 - decay) * (raw_params ** 2).mean(dim=0)
+            
+            # Normalize using updated statistics
+            normalized_params = (raw_params - self.running_mean.unsqueeze(0)) / (self.running_var.sqrt().unsqueeze(0) + eps)
+            return (torch.cat([input[0][:,:-param_dim], normalized_params], dim = -1),)
+        
+        self.actor.register_forward_pre_hook(param_hook)
+        self.int_critic.register_forward_pre_hook(param_hook)
 
     def get_value(self, x, params=None):
         # param normalization is important
